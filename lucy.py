@@ -10,7 +10,7 @@
 
 """
 ============================================================
-  🤖  Lucy — Robotwala RAG-Powered Speech-to-Speech Chatbot
+  🤖  Naaila — Robotwala RAG-Powered Speech-to-Speech Chatbot
   Production Release  (Audit Pass 3 — Raspberry Pi optimized)
 ============================================================
 
@@ -152,7 +152,7 @@ import subprocess
 import shutil
 _ESPEAK_AVAILABLE: bool = shutil.which("espeak") is not None
 if not _ESPEAK_AVAILABLE:
-    logging.getLogger("lucy").warning(
+    logging.getLogger("Naaila").warning(
         "espeak not found — offline TTS unavailable. "
         "Install with: sudo apt install espeak espeak-data libespeak-dev"
     )
@@ -171,7 +171,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("lucy")
+logger = logging.getLogger("Naaila")
 
 
 # ══════════════════════════════════════════════════════════
@@ -212,8 +212,8 @@ MAX_HISTORY_ITEMS = MAX_HISTORY_TURNS * 2
 LLM_MAX_RETRIES   = 4
 
 # ── RAG settings ──────────────────────────────────────────
-PDF_PATH_EN   = os.getenv("PDF_PATH_EN", "/home/acrossd/Desktop/lucy/robotwala_english_details.pdf")
-PDF_PATH_HI   = os.getenv("PDF_PATH_HI", "/home/acrossd/Desktop/lucy/robotwala_hindi_details.pdf")
+PDF_PATH_EN   = os.getenv("PDF_PATH_EN", "/home/acrossd/Desktop/Naaila/robotwala_english_details.pdf")
+PDF_PATH_HI   = os.getenv("PDF_PATH_HI", "/home/acrossd/Desktop/Naaila/robotwala_hindi_details.pdf")
 CHUNK_SIZE    = 300   # smaller chunks → less context noise fed to LLM
 CHUNK_OVERLAP = 50
 TOP_K         = 3     # was 5; 3 × 300 words is enough context, keeps prompt small
@@ -264,7 +264,7 @@ COST_PER_1K_PROMPT_TOKENS     = float(os.getenv("COST_PER_1K_PROMPT_TOKENS", "0"
 COST_PER_1K_COMPLETION_TOKENS = float(os.getenv("COST_PER_1K_COMPLETION_TOKENS", "0") or 0)
 
 # ── Long-term memory config (FIX-A5) ───────────────────────
-LTM_PATH       = os.getenv("LTM_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "lucy_memory.json"))
+LTM_PATH       = os.getenv("LTM_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "Naaila_memory.json"))
 LTM_MAX_FACTS  = 50
 LTM_RETRIEVE_K = 4
 
@@ -283,7 +283,7 @@ POST_SPEECH_COOLDOWN_S = 0.35
 
 # ── System prompts ────────────────────────────────────────
 _BASE_EN = (
-    "Your name is Lucy. You are the official AI assistant and virtual "
+    "Your name is Naaila. You are the official AI assistant and virtual "
     "representative of Robotwala,"
     "RESPONSE LENGTH — CRITICAL: You are a VOICE assistant. Your reply "
     "will be spoken aloud. Limit every response to 2-3 sentences maximum. "
@@ -305,7 +305,7 @@ _BASE_EN = (
 )
 
 _BASE_HI = (
-    "Aapka naam Lucy hai. Aap Robotwala ke official AI assistant aur "
+    "Aapka naam Naaila hai. Aap Robotwala ke official AI assistant aur "
     "virtual representative hain."
     "JAWAB KI LAMBAI — ZAROORI: Aap ek VOICE assistant hain. Aapka jawab "
     "bol ke sunaya jayega. Har jawab sirf 2-3 sentence mein dein. "
@@ -1805,7 +1805,7 @@ def print_banner(rag_en_ready: bool, rag_hi_ready: bool) -> None:
     sep = "=" * 60
     banner = (
         f"\n{sep}\n"
-        f"  Lucy 🤖  |  Robotwala, Indore\n"
+        f"  Naaila 🤖  |  Robotwala, Indore\n"
         f"{sep}\n"
         f"  RAG (EN) status : {status_en}\n"
         f"  RAG (HI) status : {status_hi}\n"
@@ -2000,11 +2000,15 @@ def main() -> None:
         lang  = "hi"
         last_gc_time = time.time()
 
-        speak("Assalamu Alaikum and a very warm welcome to everyone," 
-        "आज हम यहाँ Urooj Award Function में उन होनहार बेटियों की achievements celebrate करने के लिए एकत्र हुए हैं, जिन्होंने अपनी मेहनत, लगन और प्रतिभा से शानदार सफलता हासिल की है। Urooj एक खूबसूरत initiative है, जो बेटियों को प्रोत्साहित करने, उनके आत्मविश्वास को बढ़ाने और उनके उज्ज्वल भविष्य का सम्मान करने के लिए आयोजित किया गया है।As it is said, Empowered girls become the leaders of tomorrow    "
-        "मेरा नाम Lucy है, और मैं Robotwala की Reception Robot हूँ। मुझे आज इस विशेष कार्यक्रम का हिस्सा बनकर बहुत खुशी हो रही है।"
-        "Now, I would like to introduce Professor Imran Baig, India's First Traffic Robot Inventor and a renowned expert in Robotics, AI, and Automation   "
-        "Ladies and Gentlemen, please welcome Professor Imran Baig Sir, over to you,Thank you so much ", lang="hi")
+        speak("अस्सलामु अलैकुम , and a very  warm welcome to everyone . " 
+        "आज हम यहाँ Urooj Award Function में उन होनहार बेटियों की achievements celebrate करने के लिए एकत्र हुए हैं, जिन्होंने अपनी mehnat, लगन और प्रतिभा से शानदार सफलता हासिल की है। Urooj एक खूबसूरत initiative है, जो बेटियों को प्रोत्साहित करने, उनके आत्मविश्वास को बढ़ाने और उनके उज्ज्वल भविष्य का सम्मान करने के लिए आयोजित किया गया है। As it is said, Empowered girls become the leaders of tomorrow . "
+        "मेरा नाम Naayla है, और मैं Robotwala की Reception Robot हूँ। मुझे आज इस विशेष कार्यक्रम का हिस्सा बनकर बहुत खुशी हो रही है।"
+        "Now, I would like to introduce Professor Imran Baig, India's First Traffic Robot Inventor and a renowned expert in Robotics, AI, and Automation . "  
+        " "
+        "Ladies and Gentlemen, please welcome Professor Imran Baig Sir ."
+        #over to you
+        #Thank you so much 
+        , lang="hi")
 
         global _last_idle_error_time
         _last_idle_error_time = 0.0
