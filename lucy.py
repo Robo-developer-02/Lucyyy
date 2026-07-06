@@ -190,7 +190,6 @@ logger.info("API key loaded.")
 # ══════════════════════════════════════════════════════════
 
 STT_MODEL      = "whisper-large-v3"        # full quality — used for conversation
-STT_MODEL_FAST = "whisper-large-v3-turbo"  # 3× faster — used for IDLE wake-word only
 CHAT_MODEL     = "openai/gpt-oss-20b"
 
 TTS_VOICE_EN = "en-US-JennyNeural"
@@ -212,8 +211,8 @@ MAX_HISTORY_ITEMS = MAX_HISTORY_TURNS * 2
 LLM_MAX_RETRIES   = 4
 
 # ── RAG settings ──────────────────────────────────────────
-PDF_PATH_EN   = os.getenv("PDF_PATH_EN", "/home/acrossd/Desktop/Naaila/robotwala_english_details.pdf")
-PDF_PATH_HI   = os.getenv("PDF_PATH_HI", "/home/acrossd/Desktop/Naaila/robotwala_hindi_details.pdf")
+PDF_PATH_EN   = os.getenv("PDF_PATH_EN", "/home/acrossd/Desktop/nyla/robotwala_english_details.pdf")
+PDF_PATH_HI   = os.getenv("PDF_PATH_HI", "/home/acrossd/Desktop/nyla/robotwala_hindi_details.pdf")
 CHUNK_SIZE    = 300   # smaller chunks → less context noise fed to LLM
 CHUNK_OVERLAP = 50
 TOP_K         = 3     # was 5; 3 × 300 words is enough context, keeps prompt small
@@ -235,7 +234,7 @@ WEB_KEYWORDS = [
 # MicManager continuously tracks the ambient noise floor and recomputes
 # the live threshold from it, so the same build works in a silent
 # office AND a noisy auditorium without a manual retune.
-ENERGY_THRESHOLD        = 0.10   # startup default, replaced after calibration
+ENERGY_THRESHOLD        = 0.15   # startup default, replaced after calibration
 ENERGY_THRESHOLD_MIN    = 0.006   # floor — never get more sensitive than this
 ENERGY_THRESHOLD_MAX    = 0.09    # ceiling — never get so insensitive it needs shouting
 NOISE_FLOOR_MARGIN      = 2.2     # live threshold = ambient_noise_floor * this
@@ -246,8 +245,11 @@ SILENCE_AFTER_SPEECH = 1.2
 PRE_ROLL_CHUNKS      = 6
 MIN_SPEECH_SECS      = 0.5
 CHUNK_SECS           = 0.2
-IDLE_TIMEOUT         = 15.0
-IDLE_POLL_TIMEOUT    = 30.0
+# Always-listening mode: the mic is expected to be physically muted/
+# unmuted by the operator, not by an idle timeout. capture() still
+# needs a numeric timeout internally, so we give it effectively no
+# timeout — it will simply keep waiting for speech indefinitely.
+LISTEN_TIMEOUT       = float("inf")
 
 # ── Microphone / hardware recovery config (FIX-R2) ─────────
 MIC_NAME = os.getenv("MIC_NAME", "").strip()
@@ -255,9 +257,6 @@ MIC_MAX_OPEN_ATTEMPTS   = 3     # per ensure_open() call, before raising
 MIC_OPEN_BACKOFF_BASE_S = 1.5
 MIC_SILENT_FRAMES_LIMIT = 10    # ~5s of ZERO frames (not just quiet ones) ⇒ assume disconnect
 HARDWARE_ERROR_ANNOUNCE_COOLDOWN_S = 30.0
-
-# ── Wake words ────────────────────────────────────────────
-WAKE_WORDS = ["hello", "hey", "hello robotwala", "hey robotwala", "robotwala", "robowala"]
 
 # ── Token accounting / cost config (FIX-A4) ────────────────
 COST_PER_1K_PROMPT_TOKENS     = float(os.getenv("COST_PER_1K_PROMPT_TOKENS", "0") or 0)
@@ -335,15 +334,52 @@ _LANG_DIRECTIVE = {
 }
 
 
+# ── Hardcoded Q&A (fixed answers — do not paraphrase, do not blend) ──
+# Each entry below is a LOCKED question/answer pair. If the user's
+# question matches one of these (in meaning, not just exact wording),
+# respond with ONLY that entry's answer, word for word. Do not add
+# information from any other hardcoded entry, do not summarize more
+# than one entry together, and do not mix this content with RAG/PDF/
+# web-search context even if it seems related.
+
+_HARDCODED_QA_EN = (
+    "HARDCODED Q&A — FIXED ANSWERS: The following questions have exact, "
+    "locked answers. If the user asks a question that matches one of these "
+    "(even if phrased differently), reply with ONLY that single answer, "
+    "exactly as written below, and nothing else. and do not add extra explanation.\n"
+    "\n"
+    
+    
+    "Q1: \"Naayla, can AI replace humans?\"\n"
+    "A1: \"No, AI is designed to assist humans, not replace them. It can "
+    "automate repetitive tasks and analyze information quickly.\"\n"
+)
+
+_HARDCODED_QA_HI = (
+    "HARDCODED Q&A — FIXED JAWAB: Neeche diye gaye sawaalon ke jawab fixed "
+    "hain. Agar user in mein se koi sawaal poochta hai (chahe alag tarike se "
+    "poochein), to SIRF wahi ek jawab dena hai, bilkul jaisa neeche likha "
+    "hai, aur kuch nahi. aur apni taraf se extra explanation mat jodna.\n"
+    "\n"
+    "Q1: \"Naayla, Artificial Intelligence kya hai?\"\n"
+    "A1: \"Artificial Intelligence, yaani AI, ek aisi technology hai jo "
+    "computers aur machines ko seekhne, samajhne aur problems solve karne "
+    "ki capability deti hai. AI hamare kaam ko fast, smart aur efficient "
+    "banata hai.\"\n"
+   
+)
+
+
 def build_system(lang: str) -> str:
     """
     Build the SYSTEM message only. Kept 100% static per language so it
     forms a stable, cacheable prompt prefix (see get_ai_reply for how
     dynamic content is appended afterward instead of mixed in here).
     """
-    base      = _BASE_HI if lang == "hi" else _BASE_EN
-    directive = _LANG_DIRECTIVE.get(lang, _LANG_DIRECTIVE["en"])
-    return f"{base}\n\n{directive}"
+    base       = _BASE_HI if lang == "hi" else _BASE_EN
+    hardcoded  = _HARDCODED_QA_HI if lang == "hi" else _HARDCODED_QA_EN
+    directive  = _LANG_DIRECTIVE.get(lang, _LANG_DIRECTIVE["en"])
+    return f"{base}\n\n{hardcoded}\n{directive}"
 
 
 # ══════════════════════════════════════════════════════════
@@ -365,8 +401,7 @@ def validate_config() -> None:
     _positive("SILENCE_AFTER_SPEECH", SILENCE_AFTER_SPEECH)
     _positive("MIN_SPEECH_SECS", MIN_SPEECH_SECS)
     _positive("CHUNK_SECS", CHUNK_SECS)
-    _positive("IDLE_TIMEOUT", IDLE_TIMEOUT)
-    _positive("IDLE_POLL_TIMEOUT", IDLE_POLL_TIMEOUT)
+    _positive("LISTEN_TIMEOUT", LISTEN_TIMEOUT)
     _positive("WEB_TIMEOUT", WEB_TIMEOUT)
     _positive("LLM_MAX_RETRIES", LLM_MAX_RETRIES + 1)
     _positive("MIC_CALIBRATION_SECONDS", MIC_CALIBRATION_SECONDS)
@@ -413,7 +448,6 @@ def validate_config() -> None:
 # ══════════════════════════════════════════════════════════
 
 class State(Enum):
-    IDLE      = "idle"
     LISTENING = "listening"
     THINKING  = "thinking"
     SPEAKING  = "speaking"
@@ -1587,23 +1621,6 @@ def transcribe(audio: np.ndarray) -> Tuple[str, str]:
     return text, lang
 
 
-def transcribe_fast(audio: np.ndarray) -> Tuple[str, str]:
-    """Fast transcription for IDLE wake-word detection only."""
-    if not is_internet_available():
-        raise ConnectionError("No internet connection.")
-    text, _ = _transcribe_once(audio, STT_MODEL_FAST)
-    return text, "en"
-
-
-# ══════════════════════════════════════════════════════════
-#  WAKE WORD
-# ══════════════════════════════════════════════════════════
-
-def is_wake_word(text: str) -> bool:
-    lower = text.lower().strip()
-    return any(w in lower for w in WAKE_WORDS)
-
-
 # ══════════════════════════════════════════════════════════
 #  TTS  (FIX-P5, FIX-R1: in-memory synthesis+playback, FIX-R3: mixer recovery)
 # ══════════════════════════════════════════════════════════
@@ -1819,8 +1836,7 @@ def print_banner(rag_en_ready: bool, rag_hi_ready: bool) -> None:
         f"  Long-term memory: {LTM_PATH} ({len(long_term_memory.retrieve('', limit=LTM_MAX_FACTS))} facts)\n"
         f"  Log level       : {_log_level_name}\n"
         f"  States          :\n"
-        f"    👂 LISTENING  — auto-detects your voice\n"
-        f"    😴 IDLE       — {int(IDLE_TIMEOUT)}s silence → idle\n"
+        f"    👂 LISTENING  — always listening (mic muted/unmuted manually)\n"
         f"    🔊 SPEAKING   — playing response\n"
         f"  Ctrl+C to quit\n"
         f"{sep}\n"
@@ -1830,7 +1846,6 @@ def print_banner(rag_en_ready: bool, rag_hi_ready: bool) -> None:
 
 def state_label(state: State) -> str:
     return {
-        State.IDLE:      "😴 IDLE",
         State.LISTENING: "👂 LISTENING",
         State.THINKING:  "🤔 THINKING",
         State.SPEAKING:  "🔊 SPEAKING",
@@ -1960,7 +1975,83 @@ def _process_query(user_text: str, lang: str, rag_en: RAGEngine, rag_hi: RAGEngi
         logger.info("AI   [%s] › %s", lang.upper(), refusal)
         return refusal
 
-    logger.debug("Retrieving context …")
+    logger.debug("Retrieving context …")"""
+  FIX-P3  Conversation history capped at MAX_HISTORY_TURNS.
+  FIX-P4  All print() calls replaced with the stdlib logging module.
+  FIX-P5  asyncio event loop created once, reused by every speak() call.
+  FIX-P6  Reply scoped per iteration via a helper function.
+  FIX-P7  User text sanitized before being passed to the LLM / logged.
+  FIX-P8  build_context() sets source="PDF" whenever pdf_context is non-empty.
+  FIX-P9  transcribe() retries once with language="hi" when Whisper outputs
+          Urdu/Arabic script for what is actually Hindi speech.
+
+  ── Audit Pass 2 (reliability) ──────────────────────────────────────
+  FIX-A1  is_internet_available() no longer mutates the global socket
+          timeout — uses a scoped per-call timeout instead.
+  FIX-A2  LLM retries distinguish retryable (429/5xx/network) from
+          non-retryable (4xx) errors — fails fast on the latter.
+  FIX-A3  Retry backoff includes jitter.
+  FIX-A4  TokenStats: session/daily totals, avg/min/max tokens, avg
+          latency, requests/hour, optional cost estimate.
+  FIX-A5  LongTermMemory: selective, bounded, persisted durable facts.
+  FIX-A6  validate_config() fails fast at startup on bad configuration.
+  FIX-A7  Precompiled whitespace regex.
+  FIX-A8  CircuitBreaker for the Groq chat endpoint.
+
+  ── Audit Pass 3 (Raspberry Pi resource optimization) ───────────────
+  FIX-R1  STT and TTS no longer touch disk in the normal path. Audio is
+          held in memory (io.BytesIO / raw bytes) end-to-end: WAV bytes
+          are built in memory and uploaded directly as a (filename,
+          bytes) tuple for STT; TTS audio is streamed from edge-tts
+          directly into pygame's mixer via a BytesIO buffer. A temp-file
+          write is used ONLY as a last-resort compatibility fallback if
+          the installed pygame build can't load from a file-like object,
+          and that file is deleted immediately after playback. This
+          removes the majority of disk writes from the hot path — a real
+          concern for SD-card wear and I/O latency on a Pi.
+
+  FIX-R2  The microphone is no longer opened and closed on every single
+          listen cycle. A persistent PortAudio InputStream is opened once
+          (MicManager) and reused across the whole run, eliminating
+          repeated ALSA/PortAudio setup/teardown overhead. MicManager
+          also detects a stalled/disconnected device (no audio frames at
+          all for several seconds — silence still delivers frames; total
+          silence from the *driver* does not) and transparently attempts
+          reconnection with backoff, re-resolving the device by name
+          since a physical replug can change its device index.
+
+  FIX-R3  pygame's mixer is health-checked before each playback and
+          re-initialized automatically if it has gone down (e.g. a USB
+          speaker was unplugged and replugged), so speaker failures
+          self-heal on the next turn instead of silently going dark
+          forever.
+
+  FIX-R4  RAG PDF indices (chunks + TF-IDF vectorizer + matrix) are
+          cached to disk (pickle) keyed by the source PDF's mtime.
+          Startup skips PDF text extraction and re-vectorization entirely
+          when the cache is valid, cutting cold-start CPU time and
+          latency; the cache self-invalidates the moment the PDF file
+          changes.
+
+  FIX-R5  TfidfVectorizer now stores its matrix as float32 instead of
+          float64, halving the RAM footprint of both RAG indices with no
+          precision loss that matters for cosine similarity ranking.
+
+  FIX-R6  Web search uses one shared, small-pool requests.Session instead
+          of ad-hoc connections, reusing TCP/TLS handshakes across calls
+          to cut network latency and CPU.
+
+  FIX-R7  Removed threading.Lock usage from history / TokenStats /
+          LongTermMemory / CircuitBreaker. This process is effectively
+          single-threaded — the only other thread is the PortAudio
+          callback thread owned by sounddevice, which never touches this
+          state (it only pushes into a thread-safe queue.Queue and reads
+          a bool). The locks provided no real protection and were pure
+          overhead; removed for simplicity and to avoid implying
+          concurrency that doesn't exist.
+
+  FIX-R8  A cheap periodic gc.collect() runs at most every 30 minutes
+
 
     context, source = build_context(clean, lang, rag_en, rag_hi)
     logger.info("Source: %s", source)
@@ -2002,77 +2093,38 @@ def main() -> None:
         lang  = "hi"
         last_gc_time = time.time()
 
-        speak("अस्सलामु अलैकुम , and a very  warm welcome to everyone . " 
-        "आज हम यहाँ Urooj Award Function में उन होनहार बेटियों की achievements celebrate करने के लिए एकत्र हुए हैं, जिन्होंने अपनी mehnat, लगन और प्रतिभा से शानदार सफलता हासिल की है। Urooj एक खूबसूरत initiative है, जो बेटियों को प्रोत्साहित करने, उनके आत्मविश्वास को बढ़ाने और उनके उज्ज्वल भविष्य का सम्मान करने के लिए आयोजित किया गया है। As it is said, Empowered girls become the leaders of tomorrow . "
-        "मेरा नाम Naayla है, और मैं Robotwala की Reception Robot हूँ। मुझे आज इस विशेष कार्यक्रम का हिस्सा बनकर बहुत खुशी हो रही है।"
-        "Now, I would like to introduce Professor Imran Baig, India's First Traffic Robot Inventor and a renowned expert in Robotics, AI, and Automation . "  
-        " "
-        "Ladies and Gentlemen, please welcome Professor Imran Baig Sir ."
+        speak("Hello"
+
         #over to you
         #Thank you so much 
+        
         , lang="hi")
-
-        global _last_idle_error_time
-        _last_idle_error_time = 0.0
 
         while True:
 
-            # ── IDLE ──────────────────────────────────────
-            if state == State.IDLE:
+            # ── LISTENING (always on) ────────────────────
+            # No idle timeout, no wake word. The mic is expected to be
+            # physically muted/unmuted by the operator; whenever it's
+            # unmuted and picks up speech, it's processed directly.
+            if state == State.LISTENING:
                 logger.debug(state_label(state))
 
-                # FIX-R8: cheap defensive GC pass, at most every 30 min,
-                # only while already idle (never adds hot-path latency).
+                # FIX-R8: cheap defensive GC pass, at most every 30 min.
                 if time.time() - last_gc_time >= GC_INTERVAL_SECONDS:
                     collected = gc.collect()
-                    logger.debug("Idle GC pass collected %d objects.", collected)
+                    logger.debug("GC pass collected %d objects.", collected)
                     last_gc_time = time.time()
 
                 try:
-                    audio = _mic_manager.capture(timeout=IDLE_POLL_TIMEOUT)
+                    audio = _mic_manager.capture(timeout=LISTEN_TIMEOUT)
                 except MicUnavailableError as exc:
                     announce_error(exc, "en")
                     continue  # ensure_open() will retry with backoff on next capture()
 
                 if audio is None:
-                    continue
-
-                try:
-                    wake_text, _ = transcribe_fast(audio)
-                except Exception as exc:
-                    now = time.time()
-                    if now - _last_idle_error_time >= 30.0:
-                        announce_error(exc, "en")
-                        _last_idle_error_time = now
-                    logger.warning("Wake-word transcription failed: %s", exc)
-                    continue
-                logger.debug("Heard (idle): %s", wake_text)
-
-                if is_wake_word(wake_text):
-                    history["en"].clear()
-                    history["hi"].clear()
-                    state = State.LISTENING
-                    speak("Haan, mein sun raha hoon.", lang="hi")
-                continue
-
-            # ── LISTENING ─────────────────────────────────
-            if state == State.LISTENING:
-                logger.debug(state_label(state))
-
-                try:
-                    audio = _mic_manager.capture(timeout=IDLE_TIMEOUT)
-                except MicUnavailableError as exc:
-                    announce_error(exc, "en")
-                    state = State.IDLE
-                    continue
-
-                if audio is None:
-                    state = State.IDLE
-                    speak(
-                        "Mein idle mode mai jaa raha hoo, "
-                        "Mujhe activate krne ke liye Hello boliyein.",
-                        lang="hi",
-                    )
+                    # LISTEN_TIMEOUT is infinite, so this shouldn't
+                    # normally trigger — but if it ever does, just
+                    # keep listening rather than going idle.
                     continue
 
                 try:
